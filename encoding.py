@@ -3,6 +3,7 @@ import csv
 import muspy
 import numpy as np
 import json
+import math
 
 RESOLUTION = 12
 MAX_DURATION = 384
@@ -22,6 +23,9 @@ def get_time_signature(midi):
     for event in midi.time_signature_changes:
         return event.numerator, event.denominator
     return None
+
+# def get_tempo(midi):
+#     return midi.initial_tempo()
 
 def calculate_sections(music, total_duration):
     beginning_boundary = 0.3 * total_duration
@@ -49,14 +53,17 @@ def calculate_sections(music, total_duration):
 
     return note_sections
 
-def extract_notes(music, resolution):
+def extract_notes(music, resolution,tempo):
     notes = []
     for instrument in music.instruments:
         if not instrument.is_drum and instrument.program == 0:  # instrument.program == 0 is piano
             for note in instrument.notes:
-                beat, position = divmod(note.start, resolution)
+                second_per_beat = 60 / tempo
+                temp_beat = (note.start / second_per_beat) + 1
+                beat = math.floor(temp_beat)
+                position = temp_beat - beat
                 notes.append((beat, position, note.pitch, note.end - note.start, note.velocity))
-    notes = sorted(set(notes))
+    
     return np.array(notes)
 
 def encode_notes(notes, max_beat, note_sections):
@@ -91,7 +98,7 @@ def decode_notes(codes):
             notes.append((beat, position, pitch, duration, velocity))
     return notes
 
-def encode(music):
+def encode(music, tempo):
     time_signature = get_time_signature(music)
     if time_signature:
         numerator, denominator = time_signature
@@ -106,7 +113,7 @@ def encode(music):
 
     total_duration = music.get_end_time()
     note_sections = calculate_sections(music, total_duration)
-    notes = extract_notes(music, RESOLUTION)
+    notes = extract_notes(music, RESOLUTION, tempo)
     codes = encode_notes(notes, max_beat, note_sections)
 
     return codes
