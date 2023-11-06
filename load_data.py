@@ -11,7 +11,7 @@ from encoding import encode, save_csv
 def main():
     maestro_dir = "maestro-v2.0.0"
     csv_tuple_dir = "csv_tuple"
-    target_file = '35393.mid'
+    target_file = 'MIDI-Unprocessed_01_R1_2006_01-09_ORIG_MID--AUDIO_01_R1_2006_01_Track01_wav.midi'
     
     if not os.path.exists(csv_tuple_dir):
         os.makedirs(csv_tuple_dir)
@@ -22,7 +22,8 @@ def main():
                 midi_file = os.path.join(root, file)
                 music = pretty_midi.PrettyMIDI(midi_file)
                 tempo_changes = music.get_tempo_changes()
-                tempo = math.floor(tempo_changes[1][0])
+                tempo = (tempo_changes[1][0])
+                print(tempo)
                 
                 encoded = encode(music, tempo)
                 encoded_data = encoded.tolist()
