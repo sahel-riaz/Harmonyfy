@@ -1,8 +1,15 @@
 import os
 import muspy
+import csv
 import json
 
 resolution = 12
+
+TYPE_CODE_MAP = {
+    "start-of-song": 0,
+    "note": 1,
+    "end-of-song": 2,
+}
 
 
 def adjust_resolution(music):
@@ -13,6 +20,27 @@ def adjust_resolution(music):
             if note.duration == 0:
                 note.duration = 1
     music.remove_duplicate()
+
+
+def adjust_position(position):
+    position_code_map = {
+        0: 1,
+        1: 2,
+        2: 3,
+        3: 4,
+        4: 5,
+        5: 6,
+        6: 7,
+        7: 8,
+        8: 9,
+        9: 10,
+        10: 11,
+        11: 12,
+        "null": 0
+    }
+
+    position = position_code_map[position]
+    return position
 
 
 def adjust_duration(music):
@@ -436,16 +464,12 @@ def get_section(music, total_beats):
             beat, _ = divmod(note.time, resolution)
             if beat <= beginning_boundary:
                 note_sections.append([beat, 1])
-                # note_sections.append(1)  # Beginning
             elif beat <= development_boundary:
                 note_sections.append([beat, 2])
-                # note_sections.append(2)  # Development
             elif beat <= recapitulation_boundary:
                 note_sections.append([beat, 3])
-                # note_sections.append(3)  # Recapitulation
             else:
                 note_sections.append([beat, 4])
-                # note_sections.append(4)  # Coda
 
     return note_sections
 
@@ -458,15 +482,34 @@ def convert_to_json(music, file, out_dir):
     # end_time = music.get_end_time()
     # if end_time > resolution * 4 * 2000 or end_time < resolution * 4 * 10:
     #     continue
+    # result = []
 
-    adjust_resolution(music)
-    adjust_duration(music)
-    get_beat_and_position(music)
-    res = get_beat_and_position(music)
-    total_beats = res[-1]
-    sections = get_section(music, total_beats)
-    print(sections)
+    # t = []
+    # t.append(TYPE_CODE_MAP['start-of-song'])
+    # t.extend([0, 0, 0, 0, 0, 0, 0])
+    # result.append(tuple(t))
 
+    # adjust_resolution(music)
+    # beatPos = get_beat_and_position(music)
+    # adjust_duration(music)
+    # total_beats = beatPos[-1]
+    # sections = get_section(music, total_beats)
+
+    # for track in music.tracks:
+    #     for i, note in enumerate(track.notes):
+    #         t = []
+    #         t.append(TYPE_CODE_MAP['note'])  # type
+    #         t.append(beatPos[i][0])  # beat
+    #         t.append(beatPos[i][1])  # position
+    #         t.append(note.pitch)  # pitch
+    #         t.append(note.velocity)  # velocity
+    #         t.append(note.duration)  # duration
+    #         t.append(1)  # instrument
+    #         t.append(sections[i][1])  # section
+    #         result.append(tuple(t))
+
+    # result.append(tuple([3, 0, 0, 0, 0, 0, 0, 0]))
+    # print(result)
     music.save_json(
         os.path.join(out_dir, f"{file}.json"))
 
@@ -491,19 +534,59 @@ def extract_notes_from_json(input_json, out_dir):
             json.dump(notes, out_file, indent=2)
 
 
+def convert_to_csv(music, file, out_dir):
+    if not os.path.exists(out_dir):
+        os.makedirs(out_dir)
+
+    csv_filename = os.path.join(out_dir, f"{file}.csv")
+    with open(csv_filename, 'w', newline='') as csvfile:
+        csv_writer = csv.writer(csvfile)
+
+        # Write CSV header
+        csv_writer.writerow(['Type', 'Beat', 'Position', 'Pitch',
+                            'Velocity', 'Duration', 'Instrument', 'Section'])
+
+        adjust_resolution(music)
+        beatPos = get_beat_and_position(music)
+        adjust_duration(music)
+        total_beats = beatPos[-1]
+        sections = get_section(music, total_beats)
+
+        csv_writer.writerow(
+            [TYPE_CODE_MAP['start-of-song'], 0, 0, 0, 0, 0, 0, 0])
+
+        for track in music.tracks:
+            for i, note in enumerate(track.notes):
+                csv_writer.writerow([
+                    TYPE_CODE_MAP['note'],
+                    beatPos[i][0],
+                    adjust_position(beatPos[i][1]),
+                    note.pitch,
+                    note.velocity,
+                    note.duration,
+                    1,
+                    sections[i][1]
+                ])
+
+        csv_writer.writerow([TYPE_CODE_MAP['end-of-song'],
+                            0, 0, 0, 0, 0, 0, 0])
+
+
 def main():
     maestro_dir = "maestro-v3.0.0"
     music_json_dir = "muspy_files_json"
     music_notes_dir = "muspy_notes"
+    music_csv_dir = "muspy_csv_dir"
 
     for root, _, files in os.walk(maestro_dir):
         for file in files:
             if file.endswith(".midi"):
                 midi_file = os.path.join(root, file)
                 music = muspy.read(midi_file)
-                convert_to_json(music, file, music_json_dir)
-                extract_notes_from_json(os.path.join(
-                    music_json_dir, f"{file}.json"), music_notes_dir)
+                # convert_to_json(music, file, music_json_dir)
+                # extract_notes_from_json(os.path.join(
+                #     music_json_dir, f"{file}.json"), music_notes_dir)
+                convert_to_csv(music, file, music_csv_dir)
                 print('---------------------- DONE ---------------------')
 
 
