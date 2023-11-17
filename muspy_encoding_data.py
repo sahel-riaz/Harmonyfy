@@ -2,6 +2,7 @@ import os
 import muspy
 import csv
 import json
+import numpy as np
 
 resolution = 12
 
@@ -482,6 +483,7 @@ def convert_to_json(music, file, out_dir):
     # end_time = music.get_end_time()
     # if end_time > resolution * 4 * 2000 or end_time < resolution * 4 * 10:
     #     continue
+
     # result = []
 
     # t = []
@@ -548,5 +550,39 @@ def convert_to_csv(music, file, out_dir):
                     sections[i][1]
                 ])
 
-        csv_writer.writerow([TYPE_CODE_MAP['end-of-song'],
-                            0, 0, 0, 0, 0, 0, 0])
+        csv_writer.writerow(
+            [TYPE_CODE_MAP['end-of-song'], 0, 0, 0, 0, 0, 0, 0])
+
+
+def convert_to_numpy(music):
+
+    adjust_resolution(music)
+    beatPos = get_beat_and_position(music)
+    adjust_duration(music)
+    total_beats = beatPos[-1]
+    sections = get_section(music, total_beats)
+
+    notes_array = []
+
+    start = [TYPE_CODE_MAP['start-of-song'], 0, 0, 0, 0, 0, 0, 0]
+    notes_array.append(start)
+
+    for track in music.tracks:
+        for i, note in enumerate(track.notes):
+            notess = [
+                TYPE_CODE_MAP['note'],
+                beatPos[i][0],
+                adjust_position(beatPos[i][1]),
+                note.pitch,
+                note.velocity,
+                note.duration,
+                1,
+                sections[i][1]
+            ]
+            notes_array.append(notess)
+
+    end = [TYPE_CODE_MAP['end-of-song'], 0, 0, 0, 0, 0, 0, 0]
+    notes_array.append(end)
+
+    result = np.array(notes_array)
+    return result
