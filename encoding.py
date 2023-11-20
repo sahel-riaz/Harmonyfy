@@ -436,13 +436,11 @@ def adjust_duration(music):
 
     for track in music.tracks:
         for note in track.notes:
-            note.duration = duration_code_map[note.duration]
-
+                note.duration = duration_code_map[note.duration] 
 
 def get_beat_and_position(music):
     res = []
     max_beat = 0
-    print(music.metadata.title)
     for track in music.tracks:
         for note in track.notes:
             beat, position = divmod(note.time, resolution)
@@ -450,6 +448,30 @@ def get_beat_and_position(music):
             max_beat = max(max_beat, beat)
     res.append(max_beat)
     return res
+
+def constraint_checker(music):
+    flag = 0
+    total = 0
+    max_beat = 0
+    max_dur = 0
+    music.adjust_resolution(resolution)
+             
+    for track in music.tracks:
+        total += len(track.notes)*len(music.tracks)
+        for note in track.notes:
+            if note.duration == 0:
+                note.duration = 1
+            beat, _ = divmod(note.time, resolution)
+            max_beat = max(max_beat, beat)
+            if note.duration > 384 or max_beat > 3078:
+                flag = 1
+                break
+            max_dur = max(max_dur, note.duration)
+        if flag == 1: break
+    music.remove_duplicate()
+    if (total + 2) > 16384:
+        flag = 1    
+    return max_beat, max_dur, total + 2
 
 
 def get_section(music, total_beats):
@@ -486,7 +508,6 @@ def convert_to_json(music, file, out_dir):
 
 
 def convert_to_numpy(music):
-
     adjust_resolution(music)
     beatPos = get_beat_and_position(music)
     adjust_duration(music)
