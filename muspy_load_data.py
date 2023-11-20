@@ -2,17 +2,8 @@ import os
 import muspy
 import numpy as np
 
-import temp as encoding
+import muspy_encoding_data as encoding
 
-
-# def write_numpy_to_txt(numpy_dir, output_txt_dir):
-#     for root, _, files in os.walk(numpy_dir):
-#         for file in files:
-#             if file.endswith(".npy"):
-#                 npy_file = os.path.join(root, file)
-#                 data = np.load(npy_file)
-#                 output_txt = os.path.join(output_txt_dir, f"{file}.txt")
-#                 np.savetxt(output_txt, data, fmt='%d', delimiter='\t')
 
 def write_numpy_to_txt(numpy_dir, output_txt_dir):
     for root, _, files in os.walk(numpy_dir):
