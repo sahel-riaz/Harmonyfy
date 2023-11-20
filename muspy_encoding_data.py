@@ -1,7 +1,5 @@
 import os
-import muspy
 import csv
-import json
 import numpy as np
 
 resolution = 12
@@ -12,39 +10,7 @@ TYPE_CODE_MAP = {
     "end-of-song": 2,
 }
 
-
-def adjust_resolution(music):
-    """Adjust the resolution of the music."""
-    music.adjust_resolution(resolution)
-    for track in music:
-        for note in track:
-            if note.duration == 0:
-                note.duration = 1
-    music.remove_duplicate()
-
-
-def adjust_position(position):
-    position_code_map = {
-        0: 1,
-        1: 2,
-        2: 3,
-        3: 4,
-        4: 5,
-        5: 6,
-        6: 7,
-        7: 8,
-        8: 9,
-        9: 10,
-        10: 11,
-        11: 12,
-        "null": 0
-    }
-
-    position = position_code_map[position]
-    return position
-
-
-def adjust_duration(music):
+def process(music):
     duration_code_map = {
         0: 1,
         1: 1,
@@ -434,89 +400,68 @@ def adjust_duration(music):
         "null": 0
     }
 
-    for track in music.tracks:
-        for note in track.notes:
-            note.duration = duration_code_map[note.duration]
-
-
-def get_beat_and_position(music):
+    """Adjust the resolution, duration, and returns beat and position"""
+    music.adjust_resolution(resolution)
     res = []
     max_beat = 0
-    print(music.metadata.title)
-    for track in music.tracks:
-        for note in track.notes:
+    for track in music:
+        for note in track:
+            if note.duration > 384 or max_beat > 2048:
+                print('FAILED', music.metadata.source_filename)
+                return None
+            note.duration = duration_code_map[note.duration]
             beat, position = divmod(note.time, resolution)
             res.append([beat, position])
             max_beat = max(max_beat, beat)
-    res.append(max_beat)
-    # print(res)
+        res.append(max_beat)
+    music.remove_duplicate()
+
     return res
 
 
-def get_section(music, total_beats):
+def adjust_position(position):
+    position_code_map = {
+        0: 1,
+        1: 2,
+        2: 3,
+        3: 4,
+        4: 5,
+        5: 6,
+        6: 7,
+        7: 8,
+        8: 9,
+        9: 10,
+        10: 11,
+        11: 12,
+        "null": 0
+    }
+
+    position = position_code_map[position]
+    return position
+
+
+def get_section(beat, total_beats):
     beginning_boundary = 0.3 * total_beats
     development_boundary = 0.6 * total_beats
     recapitulation_boundary = 0.9 * total_beats
 
-    note_sections = []
-
-    for track in music.tracks:
-        for note in track.notes:
-            beat, _ = divmod(note.time, resolution)
-            if beat <= beginning_boundary:
-                note_sections.append([beat, 1])
-            elif beat <= development_boundary:
-                note_sections.append([beat, 2])
-            elif beat <= recapitulation_boundary:
-                note_sections.append([beat, 3])
-            else:
-                note_sections.append([beat, 4])
-
-    return note_sections
-
-
-def convert_to_json(music, file, out_dir):
-    print('---------------- Converting to json ----------------')
-    if not os.path.exists(out_dir):
-        os.makedirs(out_dir)
-
-    # end_time = music.get_end_time()
-    # if end_time > resolution * 4 * 2000 or end_time < resolution * 4 * 10:
-    #     continue
-
-    # result = []
-
-    # t = []
-    # t.append(TYPE_CODE_MAP['start-of-song'])
-    # t.extend([0, 0, 0, 0, 0, 0, 0])
-    # result.append(tuple(t))
-
-    # adjust_resolution(music)
-    # beatPos = get_beat_and_position(music)
-    # adjust_duration(music)
-    # total_beats = beatPos[-1]
-    # sections = get_section(music, total_beats)
-
-    # for track in music.tracks:
-    #     for i, note in enumerate(track.notes):
-    #         t = []
-    #         t.append(TYPE_CODE_MAP['note'])  # type
-    #         t.append(beatPos[i][0])  # beat
-    #         t.append(beatPos[i][1])  # position
-    #         t.append(note.pitch)  # pitch
-    #         t.append(note.velocity)  # velocity
-    #         t.append(note.duration)  # duration
-    #         t.append(1)  # instrument
-    #         t.append(sections[i][1])  # section
-    #         result.append(tuple(t))
-
-    # result.append(tuple([3, 0, 0, 0, 0, 0, 0, 0]))
-    # print(result)
-    music.save_json(
-        os.path.join(out_dir, f"{file}.json"))
+    if beat <= beginning_boundary:
+        return 1
+    elif beat <= development_boundary:
+        return 2
+    elif beat <= recapitulation_boundary:
+        return 3
+    else:
+        return 4
 
 
 def convert_to_csv(music, file, out_dir):
+
+    beatPos = process(music)
+    if not beatPos:
+        return
+    total_beats = beatPos[-1]
+
     if not os.path.exists(out_dir):
         os.makedirs(out_dir)
 
@@ -527,12 +472,6 @@ def convert_to_csv(music, file, out_dir):
         # Write CSV header
         csv_writer.writerow(['Type', 'Beat', 'Position', 'Pitch',
                             'Velocity', 'Duration', 'Instrument', 'Section'])
-
-        adjust_resolution(music)
-        beatPos = get_beat_and_position(music)
-        adjust_duration(music)
-        total_beats = beatPos[-1]
-        sections = get_section(music, total_beats)
 
         csv_writer.writerow(
             [TYPE_CODE_MAP['start-of-song'], 0, 0, 0, 0, 0, 0, 0])
@@ -547,7 +486,7 @@ def convert_to_csv(music, file, out_dir):
                     note.velocity,
                     note.duration,
                     1,
-                    sections[i][1]
+                    get_section(beatPos[i][0], total_beats)
                 ])
 
         csv_writer.writerow(
@@ -556,11 +495,12 @@ def convert_to_csv(music, file, out_dir):
 
 def convert_to_numpy(music):
 
-    adjust_resolution(music)
-    beatPos = get_beat_and_position(music)
-    adjust_duration(music)
+    beatPos = process(music)
+
+    if not beatPos:
+        return
+
     total_beats = beatPos[-1]
-    sections = get_section(music, total_beats)
 
     notes_array = []
 
@@ -569,7 +509,7 @@ def convert_to_numpy(music):
 
     for track in music.tracks:
         for i, note in enumerate(track.notes):
-            notess = [
+            note_tuple = [
                 TYPE_CODE_MAP['note'],
                 beatPos[i][0],
                 adjust_position(beatPos[i][1]),
@@ -577,9 +517,9 @@ def convert_to_numpy(music):
                 note.velocity,
                 note.duration,
                 1,
-                sections[i][1]
+                get_section(beatPos[i][0], total_beats)
             ]
-            notes_array.append(notess)
+            notes_array.append(note_tuple)
 
     end = [TYPE_CODE_MAP['end-of-song'], 0, 0, 0, 0, 0, 0, 0]
     notes_array.append(end)
