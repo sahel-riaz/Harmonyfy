@@ -16,5 +16,7 @@ muspy_numpy_txt
 muspy_numpy_dir
 muspy2_numpy_txt
 muspy2_numpy_dir
+performance_test
+output*_midi
 
 encoding.json

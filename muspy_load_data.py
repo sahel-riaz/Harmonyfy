@@ -25,7 +25,7 @@ def main():
     # music_notes_dir = "muspy_notes"
     music_numpy_dir = "muspy2_numpy_dir"
     music_numpy_txt = 'muspy2_numpy_txt'
-    music_csv_dir = "muspy2_csv_dir"
+    # music_csv_dir = "muspy2_csv_dir"
 
     if not os.path.exists(music_numpy_dir):
         os.makedirs(music_numpy_dir)
@@ -39,8 +39,8 @@ def main():
                 midi_file = os.path.join(root, file)
                 music = muspy.read(midi_file)
                 # encoding.convert_to_json(music, file, music_json_dir)
-                encoding.convert_to_csv(music, file, music_csv_dir)
-                print('---------------------- CSV DONE ---------------------')
+                # encoding.convert_to_csv(music, file, music_csv_dir)
+                # print('---------------------- CSV DONE ---------------------')
                 numpy_data = encoding.convert_to_numpy(music)
                 if numpy_data is None:
                     continue
