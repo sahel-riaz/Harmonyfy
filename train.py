@@ -3,8 +3,10 @@ import numpy as np
 import torch
 import torch.utils.data
 import tqdm
+import shutil
 import model as mdl
 from Utilities import util
+
 
 LEARNING_RATE = 0.0005
 LR_WARMUP_STEPS = 500
@@ -18,6 +20,8 @@ MAX_SEQ_LEN = 15000
 MAX_BEAT = 2048
 BATCH_SIZE = 4
 DEVICE = torch.device("cuda")
+EARLY_STOPPING = True
+EARLY_STOPPING_TOLERANCE = 20
 
 def get_mask(data):
     max_seq_len = max(len(sample) for sample in data)
@@ -120,9 +124,14 @@ def get_lr_multiplier(step, warmup_steps, decay_end_steps, decay_end_multiplier)
    
 def main():
     train_names = pathlib.Path(f"train_names.txt")
-    
+    val_names = pathlib.Path(f"val_names.txt")
+
     train_dataset_path = pathlib.Path(f"train_dataset")
+    val_dataset_path = pathlib.Path(f"validation_dataset")
+    models_path = pathlib.Path(f"models")
+
     util.write_file_names_to_txt('D:\preprocess-2.0//train_dataset', 'train_names.txt')
+    util.write_file_names_to_txt('D:\preprocess-2.0//validation_dataset', 'val_names.txt')
 
     dataset = MusicDataset(
         train_names,
@@ -138,6 +147,21 @@ def main():
         batch_size = BATCH_SIZE, 
         shuffle = True, 
         collate_fn=MusicDataset.collate
+    )
+    
+    valid_dataset = MusicDataset(
+        val_names,
+        val_dataset_path,
+        max_seq_len=MAX_SEQ_LEN,
+        max_beat=MAX_BEAT,
+        device = DEVICE
+    )
+
+    valid_loader = torch.utils.data.DataLoader(
+        valid_dataset,
+        BATCH_SIZE,
+        num_workers=4,
+        collate_fn=MusicDataset.collate,
     )
 
     model = mdl.MusicXTransformer(
@@ -165,10 +189,12 @@ def main():
     )
 
     step = 0
+    min_val_loss = float("inf")
+    if EARLY_STOPPING:
+        count_early_stopping = 0
     
     train_iterator = iter(data_loader)
     while step < STEPS:
-
         print(f"Training...")
         model.train()
         recent_losses = []
@@ -201,6 +227,88 @@ def main():
             step += 1
 
         del seq, mask
+
+        # Validation
+        print(f"Validating...")
+        model.eval()
+        with torch.no_grad():
+            total_loss = 0
+            total_losses = [0] * 8
+            count = 0
+            for batch in valid_loader:
+                # Get input and output pair
+                seq = batch["seq"].to(DEVICE)
+                mask = batch["mask"].to(DEVICE)
+
+                # Pass through the model
+                loss, losses = model(seq, return_list=True, mask=mask)
+            
+                # Accumulate validation loss
+                count += len(batch)
+                total_loss += len(batch) * float(loss)
+
+                for idx in range(8):
+                    total_losses[idx] += float(losses[idx])
+        val_loss = total_loss / count
+        individual_losses = [l / count for l in total_losses]
+
+        print(f"Validation loss: {val_loss:.4f}")
+        print(f"Individual losses: \ntype={individual_losses[0]:.4f}, "
+            f"\n beat: {individual_losses[1]:.4f}, "
+            f"\n position: {individual_losses[2]:.4f}, "
+            f"\n pitch: {individual_losses[3]:.4f}, "
+            f"\n velocity: {individual_losses[4]:.4f}, "
+            f"\n duration: {individual_losses[5]:.4f}, "
+            f"\n instrument: {individual_losses[6]:.4f}, "
+            f"\n section: {individual_losses[7]:.4f}"
+        )   
+
+        del seq, mask
+
+        
+        # Save the model
+        checkpoint_filename = models_path / "checkpoints" / f"model_{step}.pt"
+        torch.save(model.state_dict(), checkpoint_filename)
+        print(f"Saved the model to: {checkpoint_filename}")
+
+        # Copy the model if it is the best model so far
+        if val_loss < min_val_loss:
+            min_val_loss = val_loss
+            shutil.copyfile(
+                checkpoint_filename,
+                models_path / "checkpoints" / "best_model.pt",
+            )
+            # Reset the early stopping counter if we found a better model
+            if EARLY_STOPPING:
+                count_early_stopping = 0
+        elif EARLY_STOPPING:
+            # Increment the early stopping counter if no improvement is found
+            count_early_stopping += 1
+
+        # Early stopping
+        if (
+            EARLY_STOPPING
+            and count_early_stopping > EARLY_STOPPING_TOLERANCE
+        ):
+            print(
+                "Stopped the training for no improvements in "
+                f"{EARLY_STOPPING_TOLERANCE} rounds."
+            )
+            break
+
+    # Log minimum validation loss
+    print(f"Minimum validation loss achieved: {min_val_loss}")
+
+    # Save the optimizer states
+    optimizer_filename = models_path / "checkpoints" / f"optimizer_{step}.pt"
+    torch.save(optimizer.state_dict(), optimizer_filename)
+    print(f"Saved the optimizer state to: {optimizer_filename}")
+
+    # Save the scheduler states
+    scheduler_filename = models_path / "checkpoints" / f"scheduler_{step}.pt"
+    torch.save(scheduler.state_dict(), scheduler_filename)
+    print(f"Saved the scheduler state to: {scheduler_filename}")
+
 
 if __name__ == "__main__":
     main()
