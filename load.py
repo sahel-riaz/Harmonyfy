@@ -2,7 +2,7 @@ import os
 import muspy
 import numpy as np
 
-import muspy_encoding_data as encoding
+import encode as encoding
 
 
 def write_numpy_to_txt(numpy_dir, output_txt_dir):
@@ -11,10 +11,9 @@ def write_numpy_to_txt(numpy_dir, output_txt_dir):
             if file.endswith(".npy"):
                 npy_file = os.path.join(root, file)
                 data = np.load(npy_file, allow_pickle=True)
-                # Check if data is empty or not in the expected shape
-                if data.ndim > 0:  # Check if the array is not 0D
+                if data.ndim > 0:
                     if data.ndim == 1:
-                        data = data.reshape(-1, 1)  # Convert 1D array to 2D
+                        data = data.reshape(-1, 1)
                     output_txt = os.path.join(output_txt_dir, f"{file}.txt")
                     np.savetxt(output_txt, data, fmt='%s', delimiter='\t')
 

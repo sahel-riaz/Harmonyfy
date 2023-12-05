@@ -2,7 +2,7 @@ import os
 import muspy
 import numpy as np
 
-music_numpy_dir = "muspy_numpy_dir"
+music_numpy_dir = "tests"
 output_midi_dir = "output3_midi"
 
 

@@ -1,6 +1,7 @@
 myenv
 
 tempNotes.txt
+failed.txt
 
 __pycache__
 
@@ -18,5 +19,6 @@ muspy2_numpy_txt
 muspy2_numpy_dir
 performance_test
 output*_midi
+tests
 
 encoding.json
