@@ -1,5 +1,3 @@
-
-
 import torch
 import numpy as np  
 import torch.nn.functional as F
@@ -8,9 +6,9 @@ from torch import nn
 from x_transformers.autoregressive_wrapper import (
     exists,
     top_a,
-    top_k,
     top_p
 )
+from x_transformers.autoregressive_wrapper import top_k as topk
 
 from x_transformers.x_transformers import (
     AbsolutePositionalEmbedding,
@@ -24,7 +22,7 @@ from x_transformers.x_transformers import (
 
 ENTMAX_ALPHA = 1.3
 entmax = 1.5
-DEVICE = torch.device("cuda")
+DEVICE = torch.device("cpu")
 class MusicTransformerWrapper(nn.Module):
     def __init__(self,
                  *,
@@ -47,11 +45,12 @@ class MusicTransformerWrapper(nn.Module):
         ), "attention layers must be one of Encoder or Decoder"
 
         dim = attn_layers.dim
-        self.emb_dim = 512 
+        self.emb_dim = default(emb_dim, dim)
         self.max_beat = max_beat
         self.max_seq_len = max_seq_len
         self.max_mem_len = max_mem_len
         self.shift_mem_down = shift_mem_down
+
         n_tokens = [3, 2048, 20, 129, 128, 33, 2, 5]
 
         if max_beat is not None:
@@ -113,12 +112,18 @@ class MusicTransformerWrapper(nn.Module):
     ):
         b, _, _ = x.shape
         x = x.to(DEVICE)
-
+        
         num_mem = self.num_memory_tokens
         
+        # max_value = np.max(x[:, :, 2])
+        # print("max_value#####:", x.shape)
+        # y = x.squeeze()
+        # file_path = 'output6.txt'
+        # np.savetxt(file_path, y, fmt = "%d", delimiter='\t')
+
         n_tokens = [3, 2048, 13, 129, 128, 33, 2, 5]
-    
-        token_emb = nn.ModuleList([TokenEmbedding(512, n) for n in n_tokens])
+            
+        token_emb = nn.ModuleList([TokenEmbedding(self.emb_dim, n) for n in n_tokens])
         token_emb = [emb.to(DEVICE) for emb in token_emb]
        
         x = sum(
@@ -193,7 +198,7 @@ def sample(logits,
     
     """Sample from the logits with a specific sampling strategy."""
     if kind == "top_k":
-        probs = F.softmax(top_k(logits, thres=threshold) / temperature, dim=-1)
+        probs = F.softmax(topk(logits, thres=threshold) / temperature, dim=-1)
     elif kind == "top_p":
         probs = F.softmax(top_p(logits, thres=threshold) / temperature, dim=-1)
     elif kind == "top_a":
@@ -211,7 +216,6 @@ def sample(logits,
 
 
 class MusicAutoregressiveWrapper(nn.Module):
-    # @profile
     def __init__(self, 
                  net, 
                  ignore_index=-100, 
@@ -232,6 +236,210 @@ class MusicAutoregressiveWrapper(nn.Module):
 
         self.dimensions = {'type': 0, 'beat': 1, 'position': 2, 'pitch': 3, 'velocity':4, 'duration': 5, 'instrument': 6, 'section': 7} 
         assert self.dimensions["type"] == 0
+
+    @torch.no_grad()
+    def generate(
+        self,
+        start_tokens,  # shape : (b, n, d)
+        seq_len,
+        eos_token=None,
+        temperature=1.0,  # int or list of int
+        filter_logits_fn="top_k",  # str or list of str
+        filter_thres=0.9,  # int or list of int
+        min_p_pow=2.0,
+        min_p_ratio=0.02,
+        monotonicity_dim=None,
+        return_attn=False,
+        **kwargs,
+    ):
+        _, t, dim = start_tokens.shape
+
+        if isinstance(temperature, (float, int)):
+            temperature = [temperature] * dim
+        elif len(temperature) == 1:
+            temperature = temperature * dim
+        else:
+            assert (
+                len(temperature) == dim
+            ), f"`temperature` must be of length {dim}"
+
+        if isinstance(filter_logits_fn, str):
+            filter_logits_fn = [filter_logits_fn] * dim
+        elif len(filter_logits_fn) == 1:
+            filter_logits_fn = filter_logits_fn * dim
+        else:
+            assert (
+                len(filter_logits_fn) == dim
+            ), f"`filter_logits_fn` must be of length {dim}"
+
+        if isinstance(filter_thres, (float, int)):
+            filter_thres = [filter_thres] * dim
+        elif len(filter_thres) == 1:
+            filter_thres = filter_thres * dim
+        else:
+            assert (
+                len(filter_thres) == dim
+            ), f"`filter_thres` must be of length {dim}"
+
+        if isinstance(monotonicity_dim, str):
+            monotonicity_dim = [self.dimensions[monotonicity_dim]]
+        else:
+            monotonicity_dim = [self.dimensions[d] for d in monotonicity_dim]
+
+        was_training = self.net.training
+        num_dims = len(start_tokens.shape)
+        
+        if num_dims == 2:
+            start_tokens = start_tokens[None, :, :]
+
+        self.net.eval()
+        out = start_tokens
+        mask = kwargs.pop("mask", None)
+
+        if mask is None:
+            mask = torch.ones(
+                (out.shape[0], out.shape[1]),
+                dtype=torch.bool,
+                device=out.device,
+            )
+
+        if monotonicity_dim is not None:
+            current_values = {
+                d: torch.max(start_tokens[:, :, d], 1)[0]
+                for d in monotonicity_dim
+            }
+        else:
+            current_values = None
+
+        instrument_dim = self.dimensions["instrument"]
+        type_dim = self.dimensions["type"]
+        for _ in range(seq_len):
+
+            x = out[:, -self.max_seq_len :]
+            mask = mask[:, -self.max_seq_len :]
+
+            if return_attn:
+                logits, attn = self.net(
+                    x, mask=mask, return_attn=True, **kwargs
+                )
+                logits = [l[:, -1, :] for l in logits]
+                
+            else:
+                logits = [
+                    l[:, -1, :] for l in self.net(x, mask=mask, **kwargs)
+                ]
+            # Enforce monotonicity
+            if monotonicity_dim is not None and 0 in monotonicity_dim:
+                for i, v in enumerate(current_values[0]):
+                    logits[0][i, :v] = -float("inf")
+
+            # Filter out sos token
+            logits[0][type_dim, 0] = -float("inf")
+
+            # Sample from the logits
+            sample_type = sample(
+                logits[0],
+                filter_logits_fn[0],
+                filter_thres[0],
+                temperature[0],
+                min_p_pow,
+                min_p_ratio,
+            )
+
+            # Update current values
+            if monotonicity_dim is not None and 0 in monotonicity_dim:
+                current_values[0] = torch.maximum(
+                    current_values[0], sample_type.reshape(-1)
+                )
+
+            # Iterate after each sample
+            samples = [[s_type] for s_type in sample_type]
+            for idx, s_type in enumerate(sample_type):
+                # A start-of-song, end-of-song or start-of-notes code
+                if s_type in (
+                    self.sos_type_code,
+                    self.eos_type_code,
+                    # self.son_type_code,
+                ):
+                    samples[idx] += [torch.zeros_like(s_type)] * (
+                        len(logits) - 1
+                    )
+                # An instrument code
+                # elif s_type == self.instrument_type_code:
+                #     samples[idx] += [torch.zeros_like(s_type)] * (
+                #         len(logits) - 2
+                #     )
+                #     logits[instrument_dim][:, 0] = -float("inf")  # avoid none
+                #     sampled = sample(
+                #         logits[instrument_dim][idx : idx + 1],
+                #         filter_logits_fn[instrument_dim],
+                #         filter_thres[instrument_dim],
+                #         temperature[instrument_dim],
+                #         min_p_pow,
+                #         min_p_ratio,
+                #     )[0]
+                #     samples[idx].append(sampled)
+                # A note code
+                elif s_type == self.note_type_code:
+                    for d in range(1, dim):
+                        # Enforce monotonicity
+                        if (
+                            monotonicity_dim is not None
+                            and d in monotonicity_dim
+                        ):
+                            logits[d][idx, : current_values[d][idx]] = -float(
+                                "inf"
+                            )
+
+                        # Sample from the logits
+                        logits[d][:, 0] = -float("inf")  # avoid none
+                        sampled = sample(
+                            logits[d][idx : idx + 1],
+                            filter_logits_fn[d],
+                            filter_thres[d],
+                            temperature[d],
+                            min_p_pow,
+                            min_p_ratio,
+                        )[0]
+                        samples[idx].append(sampled)
+
+                        # Update current values
+                        if (
+                            monotonicity_dim is not None
+                            and d in monotonicity_dim
+                        ):
+                            current_values[d][idx] = torch.max(
+                                current_values[d][idx], sampled
+                            )[0]
+                else:
+                    raise ValueError(f"Unknown event type code: {s_type}")
+            stacked = torch.stack(
+                [torch.cat(s).expand(1, -1) for s in samples], 0
+            )
+            out = torch.cat((out, stacked), dim=1)
+            mask = F.pad(mask, (0, 1), value=True)
+
+            if exists(eos_token):
+                is_eos_tokens = out[..., 0] == eos_token
+
+                # Mask out everything after the eos tokens
+                if is_eos_tokens.any(dim=1).all():
+                    for i, is_eos_token in enumerate(is_eos_tokens):
+                        idx = torch.argmax(is_eos_token.byte())
+                        out[i, idx + 1 :] = self.pad_value
+                    break
+
+        out = out[:, t:]
+
+        if num_dims == 1:
+            out = out.squeeze(0)
+
+        self.net.train(was_training)
+
+        if return_attn:
+            return out, attn
+
+        return out
     
     def forward(self, 
                 x, 
@@ -263,9 +471,8 @@ class MusicAutoregressiveWrapper(nn.Module):
 
         if return_list:
             return loss, losses
+        
         return loss
-
-
 class MusicXTransformer(nn.Module):
     def __init__(self, 
                  *, 
@@ -282,7 +489,14 @@ class MusicXTransformer(nn.Module):
             "use_abs_pos_emb": kwargs.pop("use_abs_pos_emb", True),
         }
         self.decoder = MusicTransformerWrapper(
-            attn_layers=Decoder(dim=dim, attn_one_kv_head = True, ff_no_bias = True, **kwargs),
+            attn_layers=Decoder(
+                dim=dim, 
+                attn_one_kv_head = True, 
+                ff_no_bias = True, 
+                attn_flash = True, 
+                use_simple_rmsnorm = True, 
+                **kwargs
+            ),
             **transformer_kwargs,
         )
         self.decoder = MusicAutoregressiveWrapper(
