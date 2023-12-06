@@ -314,7 +314,9 @@ class MusicAutoregressiveWrapper(nn.Module):
         instrument_dim = self.dimensions["instrument"]
         type_dim = self.dimensions["type"]
         for _ in range(seq_len):
-
+            
+            if out[0, -1, 1] >= 2048:
+                break
             x = out[:, -self.max_seq_len :]
             mask = mask[:, -self.max_seq_len :]
 
@@ -364,21 +366,6 @@ class MusicAutoregressiveWrapper(nn.Module):
                     samples[idx] += [torch.zeros_like(s_type)] * (
                         len(logits) - 1
                     )
-                # An instrument code
-                # elif s_type == self.instrument_type_code:
-                #     samples[idx] += [torch.zeros_like(s_type)] * (
-                #         len(logits) - 2
-                #     )
-                #     logits[instrument_dim][:, 0] = -float("inf")  # avoid none
-                #     sampled = sample(
-                #         logits[instrument_dim][idx : idx + 1],
-                #         filter_logits_fn[instrument_dim],
-                #         filter_thres[instrument_dim],
-                #         temperature[instrument_dim],
-                #         min_p_pow,
-                #         min_p_ratio,
-                #     )[0]
-                #     samples[idx].append(sampled)
                 # A note code
                 elif s_type == self.note_type_code:
                     for d in range(1, dim):
